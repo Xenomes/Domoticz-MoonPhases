@@ -1,3 +1,4 @@
+
 """
 MoonPhases Plugin
 
@@ -14,14 +15,14 @@ Version:    1.0.4: Changed icon/zip names to avoid underscores - something fishy
   version="1.0.0" wikilink="http://www.domoticz.com/wiki/plugins/"
   externallink="http://www.domoticz.com/forum/viewtopic.php?f=65&t=21993">
      <description>
-        <h3>----------------------------------------------------------------------</h3>
-        <h2>Moon Phases v.1.0.5</h2><br/>
-        <h3>----------------------------------------------------------------------</h3>
+        <p>This is a edited version of the orginal plugin, it uses the pylunar libary instead of the api</p>
+        <p>https://pypi.org/project/pylunar/</p>
+        <p>pip3 install pylunar</p>
+        <p>find your cordinates https://www.countrycoordinate.com/ </p>
      </description>
      <params>
-        <param field="Mode1" label="WU Key" width="200px" required="true" default="your_Wunderground_key"/>
-        <param field="Mode2" label="CountryCode" width="100px" required="true" default="au"/>
-        <param field="Mode3" label="City" width="300px" required="true" default="sydney"/>
+        <param field="Mode1" label="Latitude (DMS)" width="100px" required="true" default="58, 32, 16"/>
+        <param field="Mode2" label="Longitude (DMS)" width="100px" required="true" default="15, 2, 49"/>
         <param field="Mode4" label="Polling interval (minutes)" width="40px" required="true" default="60"/>
         <param field="Mode6" label="Debug" width="75px">
             <options>
@@ -38,7 +39,11 @@ import urllib.request
 import json
 from datetime import datetime
 from datetime import timedelta
-
+from datetime import date
+import time
+import sys
+sys.path.append('/home/pi/.local/lib/python3.7/site-packages')
+import pylunar
 
 icons = {"MoonPhases1NM": "MoonPhases1NM.zip",
          "MoonPhases2WC": "MoonPhases2WC.zip",
@@ -109,25 +114,50 @@ class BasePlugin:
     def onStop(self):
         Domoticz.Debug("onStop called")
         Domoticz.Debugging(0)
+    
 
     def onHeartbeat(self):
         Domoticz.Debug("onStop called")
         now = datetime.now()
         if now >= self.nextupdate:
             self.nextupdate = now + timedelta(minutes=self.pollinterval)
-            u =  "http://api.wunderground.com/api/%s/astronomy/q/%s/%s.json"  % (Parameters["Mode1"],Parameters["Mode2"],Parameters["Mode3"])
-            Domoticz.Debug('Moon URL:%s' % u)
-            data = json.loads(urllib.request.urlopen(u).read().decode('ascii'))
-            lune = data['moon_phase']['phaseofMoon'].rstrip()
-            luneage = data['moon_phase']['ageOfMoon'].strip()
-            self.southern_hemi = (data['moon_phase']['hemisphere'].rstrip() == "South")
+            
+            # Conversion of values to match this script
+            longditude = Parameters["Mode1"].split(',')
+            latitude = Parameters["Mode2"].split(',')
+            Domoticz.Debug(longditude[1])
+            mi = pylunar.MoonInfo((longditude[0], longditude[1], longditude[2]) ,(latitude[0],latitude[1],latitude[2]))
+            today = date.today()
+            now = datetime.now()
+            mi.update((today.year, today.month, today.day, now.hour, now.minute, now.second))
+            phase_percent = int(round(mi.fractional_phase(),2)*100)
+            lune = mi.phase_name()
+            
+            if lune == "WAXING_GIBBOUS":
+                lune = "Waxing Gibbous"
+            elif lune == "NEW_MOON":
+                lune = "New Moon"
+            elif lune == "WAXING_CRESCENT":
+                lune = "Waxing Crescent"
+            elif lune == "FIRST_QUARTER":
+                lune = "First Quarter"
+            elif lune == "FULL_MOON":
+                lune = "Full"
+            elif lune == "WANING_GIBBOUS":
+                lune = "Waning Gibbous"
+            elif lune == "LAST_QUARTER":
+                lune = "Last Quarter"
+            elif lune == "WANING_CRESCENT":
+                lune = "Waning Crescent"
+            
+            luneage = round(mi.age())
             Domoticz.Log("Moon Phase:"+str(lune))
             Domoticz.Log("Moon Age:"+str(luneage))
-            self.UpdateDevice(lune,luneage)
+            self.UpdateDevice(lune,luneage,phase_percent)
 
 
 
-    def UpdateDevice(self, lune, luneage):
+    def UpdateDevice(self, lune, luneage, phase_percent):
         Domoticz.Debug("UpdateDevice called")
         # Make sure that the Domoticz device still exists (they can be deleted) before updating it
         datafr = ""
@@ -157,14 +187,15 @@ class BasePlugin:
                 datafr = "MoonPhases8WC"
                 phase = 8
 
-            if self.southern_hemi:
-                datafr = '%s%s' % (datafr,self.suffix)
-            Domoticz.Debug("Setting Icon " + str(datafr))
             try:
-               Devices[1].Update(nValue=0, Name=str(lune), sValue=str(luneage), Image=Images[datafr].ID)
+               x = lune
+               y = phase_percent
+               z = str(x) + " " + str(y) + "%"
+               Devices[1].Update(nValue=0, Name=z, sValue=str(luneage), Image=Images[datafr].ID)
                Devices[1].Update(nValue=0, sValue=str(luneage), Image=Images[datafr].ID)
-            except:
-               Domoticz.Error("Failed to update device unit 1 with values %s:%s:" % (lune,luneage))
+            except Exception as e:
+               Domoticz.Error(e)
+               Domoticz.Error("Failed to update device unit 1 with values %s:%s:" % lune, luneage)
 
         return
 
